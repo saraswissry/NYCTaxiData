@@ -1,8 +1,7 @@
 'use client'
 
 import * as React from 'react'
-import * as RGL from 'react-grid-layout'
-const { Responsive, WidthProvider } = RGL as any
+import dynamic from 'next/dynamic'
 import { SidebarProvider, SidebarInset } from '@/components/ui/sidebar'
 import { AppSidebar } from '@/components/app-sidebar'
 import { StatusBar } from '@/components/status-bar'
@@ -20,10 +19,10 @@ import { ComparisonCharts } from '@/components/comparison-charts'
 import { KPIComparison } from '@/components/kpi-comparison'
 import { RecommendedAction } from '@/components/recommended-action'
 
-import 'react-grid-layout/css/styles.css'
-import 'react-resizable/css/styles.css'
-
-const ResponsiveGridLayout = WidthProvider(Responsive)
+const ResponsiveGridLayout = dynamic(
+  () => import('@/components/responsive-grid-layout'),
+  { ssr: false }
+)
 
 export default function SimulationAndDecisionEnginePage() {
   const vehicles = useAnalyticsSimulationStore((state) => state.vehicles)
