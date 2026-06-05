@@ -22,7 +22,7 @@ import { RecommendedAction } from '@/components/recommended-action'
 const ResponsiveGridLayout = dynamic(
   () => import('@/components/responsive-grid-layout'),
   { ssr: false }
-)
+) as React.ComponentType<any>
 
 export default function SimulationAndDecisionEnginePage() {
   const vehicles = useAnalyticsSimulationStore((state) => state.vehicles)
