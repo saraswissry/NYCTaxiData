@@ -10,6 +10,7 @@
     "generate:taxi-model": "node scripts/generate-nyc-taxi-glb.mjs"
   },
   "dependencies": {
+    "@deck.gl/aggregation-layers": "^9.3.3",
     "@deck.gl/core": "^9.3.2",
     "@deck.gl/geo-layers": "^9.3.2",
     "@deck.gl/layers": "^9.3.2",
