@@ -6,6 +6,10 @@ const nextConfig = {
   images: {
     unoptimized: true,
   },
+  webpack: (config) => {
+    config.resolve.symlinks = false;
+    return config;
+  },
   async redirects() {
     return [
       {
@@ -30,3 +34,4 @@ const nextConfig = {
 }
 
 export default nextConfig
+
