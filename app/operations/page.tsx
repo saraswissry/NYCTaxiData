@@ -16,6 +16,8 @@ import {
 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 import { Button } from '@/components/ui/button'
+import { AuthGuard } from '@/components/auth-guard'
+import { fleetApi } from '@/lib/fleet-api'
 
 // ── KPI card ──────────────────────────────────────────────────────────────────
 
@@ -88,29 +90,14 @@ export default function OperationsPage() {
   const [splitMode, setSplitMode] = React.useState(true)
   const [panelOpen, setPanelOpen] = React.useState(true)
   
-  // حالات جديدة لإدارة بيانات الـ API الحقيقية والتحميل
   const [stats, setStats] = React.useState<any>(null)
   const [loading, setLoading] = React.useState(true)
 
-  // جلب البيانات الحقيقية من السيرفر أول ما الصفحة تفتح
+  // Fetch real data from the production API
   React.useEffect(() => {
     const fetchLiveStats = async () => {
       try {
-        const myHeaders = new Headers()
-        // الـ Token بتاعك مدمج هنا وجاهز وصالح للاتصال بالسيرفر المحلي
-        myHeaders.append("Authorization", "Bearer ••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••••")
-
-        const requestOptions = {
-          method: 'GET',
-          headers: myHeaders,
-          redirect: 'follow' as RequestRedirect
-        }
-
-        const response = await fetch(
-          "https://localhost:7112/api/v1/admin/stats?from=2024-01-01&to=2024-01-01", 
-          requestOptions
-        )
-        const data = await response.json()
+        const data = await fleetApi.admin.getStats('2024-01-01', '2024-12-31')
         setStats(data)
       } catch (error) {
         console.error('Error fetching admin stats:', error)
@@ -122,18 +109,17 @@ export default function OperationsPage() {
     fetchLiveStats()
   }, [])
 
-  // ربط أسماء المتغيرات القادمة من الـ API الحقيقي بالكروت 
-  // (لو أسماء الـ properties في الـ JSON مختلفة تقدري تعدليها هنا بسهولة)
+  // Map API response fields to KPI card values
   const kpis = React.useMemo(() => {
     return {
-      peakDemand: stats?.peakDemand ?? 0,
-      activeTaxis: stats?.activeTaxis ?? stats?.totalDrivers ?? 0,
+      peakDemand: stats?.peakDemand ?? stats?.totalTrips ?? 0,
+      activeTaxis: stats?.activeTaxis ?? stats?.activeDrivers ?? stats?.totalDrivers ?? 0,
       avgWaitTime: stats?.avgWaitTime ?? 0,
-      revForecast: (stats?.revenue ?? stats?.totalFare ?? 0) / 1000, // مقسومة على 1000 لأن الكارت بيعرض بالـ K
+      revForecast: (stats?.totalRevenue ?? stats?.revenue ?? stats?.totalFare ?? 0) / 1000,
     }
   }, [stats])
 
-  // شاشة انتظار لطيفة ومضيئة باللون البنفسجي النيون أثناء تحميل البيانات
+  // Loading state
   if (loading) {
     return (
       <div className="flex h-screen w-screen items-center justify-center bg-[#050408] flex-col gap-3">
@@ -144,6 +130,7 @@ export default function OperationsPage() {
   }
 
   return (
+    <AuthGuard>
     <SidebarProvider defaultOpen={true}>
       <AppSidebar />
       <SidebarInset className="flex flex-col h-screen overflow-hidden bg-[#050408] text-white">
@@ -248,5 +235,6 @@ export default function OperationsPage() {
         <StatusBar />
       </SidebarInset>
     </SidebarProvider>
+    </AuthGuard>
   )
 }

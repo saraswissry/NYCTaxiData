@@ -21,12 +21,13 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { useDispatchStore } from '@/stores/use-dispatch-store'
+import { fleetApi, type ApiDispatch } from '@/lib/fleet-api'
 import {
   defaultAutoDispatchRules,
   DISPATCH_ZONE_OPTIONS,
-  generateDispatchRequests,
 } from '@/lib/dispatch-mock-data'
 import type { AutoDispatchRule, DispatchRequest } from '@/lib/dispatch-types'
+import { AuthGuard } from '@/components/auth-guard'
 import {
   Send,
   Users,
@@ -47,12 +48,33 @@ export default function DispatchPage() {
   const [autoDispatch, setAutoDispatch] = React.useState(true)
   const [panelOpen, setPanelOpen] = React.useState(true)
 
-  // Load and poll live dispatch queue
+  // Load and poll live dispatch queue from real API
   React.useEffect(() => {
     let cancelled = false
     const load = async () => {
-      const data = await generateDispatchRequests()
-      if (!cancelled) setRequests(data)
+      try {
+        const feed = await fleetApi.dispatches.getAll(50, 120)
+        if (!cancelled) {
+          // Map API dispatch items to the DispatchRequest shape the UI expects
+          const mapped: DispatchRequest[] = (feed || []).map((d: ApiDispatch) => ({
+            id: String(d.tripId),
+            zoneId: String(d.pickupZoneId),
+            zone: d.pickupZoneName || `Zone ${d.pickupZoneId}`,
+            status: d.status === 'Completed' ? 'completed' as const :
+                    d.status === 'InProgress' || d.status === 'Dispatched' ? 'in-progress' as const :
+                    'pending' as const,
+            priority: (d.priority || 'NORMAL').toLowerCase() as any,
+            driver: d.driverName || 'Unassigned',
+            passenger: d.passengerName || 'Unknown',
+            pickup: d.pickupZoneName || `Zone ${d.pickupZoneId}`,
+            dropoff: d.dropoffZoneName || `Zone ${d.dropoffZoneId}`,
+            createdAt: d.createdAt || new Date().toISOString(),
+          }))
+          setRequests(mapped)
+        }
+      } catch {
+        // If API fails, keep existing data
+      }
     }
     load()
     const id = setInterval(load, 10_000)
@@ -103,6 +125,7 @@ export default function DispatchPage() {
   }
 
   return (
+    <AuthGuard>
     <SidebarProvider defaultOpen={true}>
       <AppSidebar />
       <SidebarInset className="flex flex-col h-screen overflow-hidden bg-[#0A0B10]">
@@ -277,6 +300,7 @@ export default function DispatchPage() {
         <StatusBar />
       </SidebarInset>
     </SidebarProvider>
+    </AuthGuard>
   )
 }
 

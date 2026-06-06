@@ -18,6 +18,7 @@ import {
   ArrowUpRight, ArrowDownRight, AlertCircle,
 } from 'lucide-react'
 import { fleetApi, type ApiAdminStats, type ApiWeeklyPerformance, type ApiMonthlyRevenue, type ApiHourlyDemand } from '@/lib/fleet-api'
+import { AuthGuard } from '@/components/auth-guard'
 
 // ── Static zone distribution (structural data — doesn't change with time) ─────
 const ZONE_PERFORMANCE = [
@@ -97,6 +98,7 @@ export default function ReportsPage() {
   }
 
   return (
+    <AuthGuard>
     <SidebarProvider defaultOpen={true}>
       <AppSidebar />
       <SidebarInset className="flex flex-col h-screen overflow-hidden">
@@ -262,5 +264,6 @@ export default function ReportsPage() {
         <StatusBar />
       </SidebarInset>
     </SidebarProvider>
+    </AuthGuard>
   )
 }

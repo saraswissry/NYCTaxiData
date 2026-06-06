@@ -13,6 +13,7 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 import { ScrollArea } from '@/components/ui/scroll-area'
 import { cn } from '@/lib/utils'
 import { fleetApi, type ApiVehicle } from '@/lib/fleet-api'
+import { AuthGuard } from '@/components/auth-guard'
 import {
   Car, Navigation, Search, MapPin, Clock,
   User, Phone, ChevronRight, Circle, AlertCircle,
@@ -116,6 +117,7 @@ export default function FleetTrackingPage() {
   }))
 
   return (
+    <AuthGuard>
     <SidebarProvider defaultOpen={true}>
       <AppSidebar />
       <SidebarInset className="flex flex-col h-screen overflow-hidden">
@@ -284,5 +286,6 @@ export default function FleetTrackingPage() {
         <StatusBar />
       </SidebarInset>
     </SidebarProvider>
+    </AuthGuard>
   )
 }

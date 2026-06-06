@@ -7,10 +7,12 @@
  * Every path passed to apiFetch() MUST start with /api/v1/...
  * exactly as they appear in NYCTaxiData_API_Collection.json.
  *
- * Override with env var:
- *   NEXT_PUBLIC_API_BASE_URL=https://zonax.runasp.net
- *   NEXT_PUBLIC_API_KEY=<bearer token>
+ * Auth tokens are stored/managed by lib/auth.ts.
+ * On 401 the client attempts a silent token refresh; if that fails it
+ * clears the session and redirects to /login.
  */
+
+import { getToken, setToken, clearToken, logout } from '@/lib/auth'
 
 // ── Config ────────────────────────────────────────────────────────────────────
 
@@ -20,29 +22,89 @@ const BASE_URL =
     : 'https://zonax.runasp.net'
   ).replace(/\/$/, '')   // strip any accidental trailing slash
 
-const API_KEY =
-  (typeof process !== 'undefined' ? process.env.NEXT_PUBLIC_API_KEY : '') ?? ''
+// ── Token-refresh guard ──────────────────────────────────────────────────────
+
+let _refreshPromise: Promise<string | null> | null = null
+
+/**
+ * Try to get a fresh token from the server.
+ * Deduplicates concurrent 401 retries so only one refresh flies at a time.
+ */
+async function tryRefreshToken(): Promise<string | null> {
+  if (_refreshPromise) return _refreshPromise
+
+  _refreshPromise = (async () => {
+    const oldToken = getToken()
+    if (!oldToken) return null
+    try {
+      const res = await fetch(`${BASE_URL}/api/v1/auth/token/refresh`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ oldToken }),
+      })
+      if (!res.ok) return null
+      const data = await res.json()
+      const newToken: string | undefined = data?.token ?? data?.data?.token
+      if (newToken) {
+        setToken(newToken)
+        return newToken
+      }
+      return null
+    } catch {
+      return null
+    } finally {
+      _refreshPromise = null
+    }
+  })()
+
+  return _refreshPromise
+}
 
 // ── Core fetch wrapper ────────────────────────────────────────────────────────
+
+/** Paths that should NOT attach a Bearer token (public auth endpoints). */
+const PUBLIC_PATHS = [
+  '/api/v1/auth/login',
+  '/api/v1/auth/register/driver',
+  '/api/v1/auth/register/manager',
+  '/api/v1/auth/otp/send',
+  '/api/v1/auth/otp/verify',
+  '/api/v1/auth/password/reset',
+]
 
 async function apiFetch<T>(
   /** Full path including /api/v1/, e.g. "/api/v1/analytics/kpis" */
   path: string,
-  options: RequestInit = {}
+  options: RequestInit = {},
+  _isRetry = false,
 ): Promise<T> {
   // Dev-time guard: catch missing /api/v1 prefix before the request flies
   if (!path.startsWith('/api/v1/') && !path.startsWith('/api/v1')) {
     console.warn(`[FleetAPI] Path "${path}" should start with /api/v1/`)
   }
 
+  const token = getToken()
+  const isPublic = PUBLIC_PATHS.some((p) => path.startsWith(p))
+
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
-    ...(API_KEY ? { Authorization: `Bearer ${API_KEY}` } : {}),
+    ...(token && !isPublic ? { Authorization: `Bearer ${token}` } : {}),
     ...(options.headers as Record<string, string> | undefined),
   }
 
   const url = `${BASE_URL}${path}`
   const res = await fetch(url, { ...options, headers })
+
+  // ── 401 → try silent refresh once ───────────────────────────────────────
+  if (res.status === 401 && !_isRetry && !isPublic) {
+    const newToken = await tryRefreshToken()
+    if (newToken) {
+      return apiFetch<T>(path, options, true)
+    }
+    // Refresh failed → session is dead
+    logout()
+    throw new Error('[FleetAPI] Session expired — redirecting to login')
+  }
 
   if (!res.ok) {
     const body = await res.text().catch(() => res.statusText)
@@ -361,11 +423,43 @@ export const fleetApi = {
 
   // ── Auth ───────────────────────────────────────────────────────────────────
   auth: {
-    login: (credentials: { phoneNumber: string; password: string }) =>
+    /** POST /api/v1/auth/login */
+    login: (credentials: { phoneNumber: string; password: string }): Promise<any> =>
       apiFetch('/api/v1/auth/login', { method: 'POST', body: JSON.stringify(credentials) }),
 
-    refreshToken: (oldToken: string) =>
+    /** POST /api/v1/auth/register/driver */
+    registerDriver: (data: {
+      firstName: string; lastName: string; phoneNumber: string; password: string;
+      age: number; city: string; street: string; licenseNumber: string; plateNumber: string;
+    }): Promise<any> =>
+      apiFetch('/api/v1/auth/register/driver', { method: 'POST', body: JSON.stringify(data) }),
+
+    /** POST /api/v1/auth/register/manager */
+    registerManager: (data: {
+      firstName: string; lastName: string; phoneNumber: string; password: string;
+      age: number; city: string; street: string; employeeId: string; department: string;
+    }): Promise<any> =>
+      apiFetch('/api/v1/auth/register/manager', { method: 'POST', body: JSON.stringify(data) }),
+
+    /** POST /api/v1/auth/otp/send */
+    sendOtp: (phoneNumber: string): Promise<any> =>
+      apiFetch('/api/v1/auth/otp/send', { method: 'POST', body: JSON.stringify({ phoneNumber }) }),
+
+    /** POST /api/v1/auth/otp/verify */
+    verifyOtp: (phoneNumber: string, otpCode: string): Promise<any> =>
+      apiFetch('/api/v1/auth/otp/verify', { method: 'POST', body: JSON.stringify({ phoneNumber, otpCode }) }),
+
+    /** POST /api/v1/auth/password/reset */
+    resetPassword: (resetToken: string, newPassword: string): Promise<any> =>
+      apiFetch('/api/v1/auth/password/reset', { method: 'POST', body: JSON.stringify({ resetToken, newPassword }) }),
+
+    /** POST /api/v1/auth/token/refresh */
+    refreshToken: (oldToken: string): Promise<any> =>
       apiFetch('/api/v1/auth/token/refresh', { method: 'POST', body: JSON.stringify({ oldToken }) }),
+
+    /** GET /api/v1/auth/profile/:phoneNumber */
+    getProfile: (phoneNumber: string): Promise<any> =>
+      apiFetch(`/api/v1/auth/profile/${encodeURIComponent(phoneNumber)}`),
   },
 
   // ── Zones ──────────────────────────────────────────────────────────────────

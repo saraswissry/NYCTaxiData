@@ -7,6 +7,7 @@ import { AppSidebar } from '@/components/app-sidebar'
 import { StatusBar } from '@/components/status-bar'
 import { Badge } from '@/components/ui/badge'
 import { Sparkles } from 'lucide-react'
+import { AuthGuard } from '@/components/auth-guard'
 
 import { useAnalyticsSimulationStore } from '@/stores/use-analytics-simulation-store'
 import { useSimulationEngineStore } from '@/stores/use-simulation-engine-store'
@@ -83,6 +84,7 @@ export default function SimulationAndDecisionEnginePage() {
   }
 
   return (
+    <AuthGuard>
     <SidebarProvider defaultOpen={true}>
       <AppSidebar />
       <SidebarInset className="flex flex-col h-screen overflow-hidden">
@@ -187,5 +189,6 @@ export default function SimulationAndDecisionEnginePage() {
         <StatusBar />
       </SidebarInset>
     </SidebarProvider>
+    </AuthGuard>
   )
 }

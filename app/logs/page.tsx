@@ -15,6 +15,7 @@ import {
 } from '@/components/ui/select'
 import { cn } from '@/lib/utils'
 import { fleetApi, type ApiLogEntry } from '@/lib/fleet-api'
+import { AuthGuard } from '@/components/auth-guard'
 import {
   Bell, Search, AlertTriangle, AlertCircle, Info, CheckCircle,
   XCircle, Clock, ChevronRight, Volume2, VolumeX, Trash2, Download, RefreshCw,
@@ -64,7 +65,32 @@ export default function LogsPage() {
 
   const load = React.useCallback(async () => {
     try {
+      // Try to load real logs from localStorage first (persisted log state)
+      // Then supplement with live data from the API
       const data = await fleetApi.logs.getAll()
+
+      // Also fetch recent dispatch feed to create live log entries
+      try {
+        const feed = await fleetApi.trips.getDispatchFeed(10, 60)
+        if (feed && feed.length > 0) {
+          const feedLogs: ApiLogEntry[] = feed.map((d, i) => ({
+            id: `FEED-${d.tripId || i}`,
+            message: `Dispatch: ${d.passengerName || 'Passenger'} → ${d.dropoffZoneName || 'Zone ' + d.dropoffZoneId}`,
+            type: d.priority === 'CRITICAL' ? 'warning' as const : 'info' as const,
+            category: 'dispatch' as const,
+            timestamp: d.createdAt || new Date().toISOString(),
+            details: `Driver: ${d.driverName || 'Unassigned'} | Priority: ${d.priority} | Pickup: ${d.pickupZoneName || 'Zone ' + d.pickupZoneId}`,
+            read: false,
+          }))
+          // Merge, de-duplicate by id
+          const existingIds = new Set(data.map(l => l.id))
+          const newLogs = feedLogs.filter(l => !existingIds.has(l.id))
+          data.push(...newLogs)
+        }
+      } catch {
+        // Dispatch feed is supplementary — don't block
+      }
+
       setLogs(data.sort((a, b) => new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime()))
       setLoading(false)
     } catch {
@@ -115,6 +141,7 @@ export default function LogsPage() {
   const clearAll = () => setLogs([])
 
   return (
+    <AuthGuard>
     <SidebarProvider defaultOpen={true}>
       <AppSidebar />
       <SidebarInset className="flex flex-col h-screen overflow-hidden">
@@ -301,5 +328,6 @@ export default function LogsPage() {
         <StatusBar />
       </SidebarInset>
     </SidebarProvider>
+    </AuthGuard>
   )
 }

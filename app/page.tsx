@@ -7,6 +7,7 @@ import { TopControlBar } from '@/components/top-control-bar'
 import { CommandMap } from '@/components/command-map'
 import { AnalyticsPanel } from '@/components/analytics-panel'
 import { StatusBar } from '@/components/status-bar'
+import { AuthGuard } from '@/components/auth-guard'
 
 export default function CommandCenterPage() {
   const [selectedZone, setSelectedZone] = React.useState<any | null>(null)
@@ -18,6 +19,7 @@ export default function CommandCenterPage() {
   const [showGap, setShowGap] = React.useState(false)
 
   return (
+    <AuthGuard>
     <SidebarProvider defaultOpen={true}>
       <AppSidebar />
       <SidebarInset className="flex flex-col h-screen overflow-hidden bg-background text-foreground theme-transition">
@@ -67,5 +69,6 @@ export default function CommandCenterPage() {
         <StatusBar />
       </SidebarInset>
     </SidebarProvider>
+    </AuthGuard>
   )
 }
