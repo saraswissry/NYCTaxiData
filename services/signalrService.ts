@@ -2,7 +2,7 @@ import * as signalR from '@microsoft/signalr';
 
 class SignalRService {
   private connection: signalR.HubConnection | null = null;
-  private hubUrl = 'https://localhost:7112/hubs/tracking'; 
+  private hubUrl = 'https://https://zonax.runasp.net//hubs/simulation';
 
   public async startConnection(): Promise<void> {
     if (this.connection) return;
