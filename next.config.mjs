@@ -15,6 +15,18 @@ const nextConfig = {
       },
     ]
   },
+  async rewrites() {
+    return [
+      {
+        source: '/api/v1/:path*',
+        destination: 'https://zonax.runasp.net/api/v1/:path*',
+      },
+      {
+        source: '/hubs/:path*',
+        destination: 'https://zonax.runasp.net/hubs/:path*',
+      },
+    ]
+  },
 }
 
 export default nextConfig

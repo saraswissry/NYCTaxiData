@@ -22,6 +22,8 @@ import {
 import { cn } from '@/lib/utils'
 import { useDispatchStore } from '@/stores/use-dispatch-store'
 import { fleetApi, type ApiDispatch } from '@/lib/fleet-api'
+import * as signalR from '@microsoft/signalr'
+import { getToken } from '@/lib/auth'
 import {
   defaultAutoDispatchRules,
   DISPATCH_ZONE_OPTIONS,
@@ -43,19 +45,22 @@ import {
 
 export default function DispatchPage() {
   const [requests, setRequests] = React.useState<DispatchRequest[]>([])
+  const [feedError, setFeedError] = React.useState<string | null>(null)
   const [rules, setRules] = React.useState<AutoDispatchRule[]>(defaultAutoDispatchRules)
   const [driverCount, setDriverCount] = React.useState('')
   const [autoDispatch, setAutoDispatch] = React.useState(true)
   const [panelOpen, setPanelOpen] = React.useState(true)
 
-  // Load and poll live dispatch queue from real API
+  // Load initial dispatch queue from API and update in real-time via SignalR DispatchHub
   React.useEffect(() => {
-    let cancelled = false
-    const load = async () => {
+    let cancelled = false;
+    let connection: signalR.HubConnection | null = null;
+
+    const loadInitialFeed = async () => {
       try {
+        setFeedError(null)
         const feed = await fleetApi.dispatches.getAll(50, 120)
         if (!cancelled) {
-          // Map API dispatch items to the DispatchRequest shape the UI expects
           const mapped: DispatchRequest[] = (feed || []).map((d: ApiDispatch) => ({
             id: String(d.tripId),
             zoneId: String(d.pickupZoneId),
@@ -72,13 +77,133 @@ export default function DispatchPage() {
           }))
           setRequests(mapped)
         }
-      } catch {
-        // If API fails, keep existing data
+      } catch (err: any) {
+        console.error('Failed to load initial dispatch feed:', err)
+        if (!cancelled) {
+          setFeedError(err?.message || 'An error occurred while pulling live data from database.')
+        }
       }
     }
-    load()
-    const id = setInterval(load, 10_000)
-    return () => { cancelled = true; clearInterval(id) }
+
+    const startSignalR = async () => {
+      connection = new signalR.HubConnectionBuilder()
+        .withUrl('/hubs/dispatch', {
+          accessTokenFactory: () => getToken() ?? ''
+        })
+        .withAutomaticReconnect()
+        .build()
+
+      connection.on('NewDispatchOrder', (notification: any) => {
+        setRequests((prev) => {
+          const exists = prev.some((r) => r.id === String(notification.dispatchId))
+          if (exists) return prev
+          const newReq: DispatchRequest = {
+            id: String(notification.dispatchId),
+            zoneId: String(notification.targetZoneId),
+            zone: notification.targetZoneName || `Zone ${notification.targetZoneId}`,
+            status: 'pending',
+            priority: (notification.priority || 'NORMAL').toLowerCase() as any,
+            driver: notification.driverPhone || 'Unassigned',
+            passenger: 'Passenger',
+            pickup: notification.targetZoneName || `Zone ${notification.targetZoneId}`,
+            dropoff: 'Destination',
+            createdAt: notification.issuedAt || new Date().toISOString(),
+          }
+          return [newReq, ...prev]
+        })
+      })
+
+      connection.on('TripStatusUpdated', (data: any) => {
+        setRequests((prev) =>
+          prev.map((r) => {
+            if (r.id === String(data.tripId)) {
+              return {
+                ...r,
+                status: data.status === 'Completed' ? 'completed' as const :
+                        data.status === 'InProgress' || data.status === 'Dispatched' ? 'in-progress' as const :
+                        'pending' as const,
+              }
+            }
+            return r
+          })
+        )
+      })
+
+      connection.on('DispatchAccepted', (data: any) => {
+        setRequests((prev) =>
+          prev.map((r) => {
+            if (r.id === String(data.dispatchId)) {
+              return {
+                ...r,
+                status: 'in-progress' as const,
+                driver: data.driverPhone || r.driver,
+              }
+            }
+            return r
+          })
+        )
+      })
+
+      connection.on('DispatchRejected', (data: any) => {
+        setRequests((prev) =>
+          prev.map((r) => {
+            if (r.id === String(data.dispatchId)) {
+              return {
+                ...r,
+                status: 'pending' as const,
+                driver: 'Unassigned',
+              }
+            }
+            return r
+          })
+        )
+      })
+
+      connection.on('DriverArrivedAtPickup', (data: any) => {
+        setRequests((prev) =>
+          prev.map((r) => {
+            if (r.id === String(data.tripId)) {
+              return {
+                ...r,
+                status: 'in-progress' as const,
+              }
+            }
+            return r
+          })
+        )
+      })
+
+      connection.on('TripCompleted', (data: any) => {
+        setRequests((prev) =>
+          prev.map((r) => {
+            if (r.id === String(data.tripId)) {
+              return {
+                ...r,
+                status: 'completed' as const,
+              }
+            }
+            return r
+          })
+        )
+      })
+
+      try {
+        await connection.start()
+        console.log('Dispatch SignalR Hub Connected! ⚡')
+      } catch (err) {
+        console.error('Dispatch SignalR Connection Error:', err)
+      }
+    }
+
+    loadInitialFeed()
+    startSignalR()
+
+    return () => {
+      cancelled = true
+      if (connection) {
+        connection.stop()
+      }
+    }
   }, [])
 
   const selectedZoneId = useDispatchStore((s) => s.selectedZoneId)
@@ -249,6 +374,7 @@ export default function DispatchPage() {
               <div className="flex-1 min-h-0 p-3 pt-0">
                 <DispatchQueue
                   requests={requests}
+                  error={feedError}
                   className="h-full border-0 shadow-none bg-transparent"
                 />
               </div>

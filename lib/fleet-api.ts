@@ -19,7 +19,9 @@ import { getToken, setToken, clearToken, logout } from '@/lib/auth'
 const BASE_URL =
   (typeof process !== 'undefined' && process.env.NEXT_PUBLIC_API_BASE_URL
     ? process.env.NEXT_PUBLIC_API_BASE_URL
-    : 'https://zonax.runasp.net'
+    : typeof window !== 'undefined'
+      ? ''
+      : 'https://zonax.runasp.net'
   ).replace(/\/$/, '')   // strip any accidental trailing slash
 
 // ── Token-refresh guard ──────────────────────────────────────────────────────
@@ -113,7 +115,16 @@ async function apiFetch<T>(
 
   if (res.status === 204) return undefined as unknown as T
 
-  return res.json() as Promise<T>
+  const json: any = await res.json()
+  if (json && typeof json === 'object' && ('isSuccess' in json || 'IsSuccess' in json)) {
+    const isSuccess = json.isSuccess !== undefined ? json.isSuccess : json.IsSuccess
+    if (!isSuccess) {
+      throw new Error(json.message || json.Message || json.errorCode || 'API error')
+    }
+    if ('data' in json) return json.data as T
+    if ('value' in json) return json.value as T
+  }
+  return json as T
 }
 
 // ── Response types  (field names from NYCTaxiData_API_Collection.json) ────────
@@ -209,6 +220,73 @@ export function mapVehicle(v: any): ApiVehicle {
             v.status === 'Offline' ? 'offline' :
             v.status?.toLowerCase() || 'offline',
     efficiency: v.efficiency ?? 0.85
+  }
+}
+
+export function resolveBoroughByName(zoneName: string): string {
+  const name = zoneName.toLowerCase()
+  if (name.includes('manhattan') || name.includes('harlem') || name.includes('midtown') || name.includes('times square') || name.includes('central park') || name.includes('wall street')) return 'Manhattan'
+  if (name.includes('brooklyn') || name.includes('williamsburg') || name.includes('bridge')) return 'Brooklyn'
+  if (name.includes('queens') || name.includes('jfk') || name.includes('laguardia') || name.includes('lga')) return 'Queens'
+  if (name.includes('bronx')) return 'Bronx'
+  if (name.includes('staten')) return 'Staten Island'
+  if (name.includes('airport') || name.includes('ewr')) return 'EWR'
+  return 'Manhattan' // default fallback
+}
+
+export function mapApiZone(z: any): ApiZone {
+  if (!z) return z
+  const latitude = z.centerLatitude ?? z.CenterLatitude ?? z.latitude ?? 0
+  const longitude = z.centerLongitude ?? z.CenterLongitude ?? z.longitude ?? 0
+  const borough = z.borough || resolveBoroughByName(z.zoneName || '')
+  return {
+    ...z,
+    latitude,
+    longitude,
+    borough,
+    calculated: z.calculated ? {
+      totalPickupTrips: z.calculated.totalPickupTrips ?? 0,
+      totalDropoffTrips: z.calculated.totalDropoffTrips ?? 0,
+      totalRevenue: z.calculated.totalRevenue ?? 0,
+      avgFare: z.calculated.avgFare ?? 0,
+      avgTip: z.calculated.avgTip ?? 0,
+      busiestHourOfDay: z.calculated.busiestHourOfDay ?? 0,
+      busiestDayOfWeek: z.calculated.busiestDayOfWeek ?? 0,
+    } : undefined,
+    predicted: z.predicted ? {
+      expectedDemand15Min: z.predicted.expectedDemand15Min ?? 0,
+      expectedDemand6H: z.predicted.expectedDemand6H ?? 0,
+      expectedRevenue6H: z.predicted.expectedRevenue6H ?? 0,
+      stockoutProbability: z.predicted.stockoutProbability ?? 0,
+      busiestHourForecast: z.predicted.busiestHourForecast ?? 0,
+    } : undefined
+  }
+}
+
+export function mapApiHeatmapPoint(p: any): ApiHeatmapPoint {
+  if (!p) return p
+  const latitude = p.centerLatitude ?? p.CenterLatitude ?? p.latitude ?? 0
+  const longitude = p.centerLongitude ?? p.CenterLongitude ?? p.longitude ?? 0
+  const borough = p.borough || resolveBoroughByName(p.zoneName || '')
+  return {
+    ...p,
+    latitude,
+    longitude,
+    borough,
+    calculatedTripCount: p.calculatedTripCount ?? p.tripCount ?? 0,
+    predictedTripCount: p.predictedTripCount ?? p.demandPrediction ?? 0,
+    predictedStockoutProbability: p.predictedStockoutProbability ?? 0,
+    surgeMultiplier: p.surgeMultiplier ? Number(p.surgeMultiplier) : 1.0,
+    demandLevel: p.demandLevel || 'NORMAL',
+    tripCount: p.tripCount ?? p.calculatedTripCount ?? 0,
+  }
+}
+
+export function mapApiRecommendedZone(r: any): ApiRecommendedZone {
+  if (!r) return r
+  return {
+    ...r,
+    borough: r.borough || resolveBoroughByName(r.zoneName || ''),
   }
 }
 
@@ -314,41 +392,7 @@ export interface ApiSimulationStatus {
   speedFactor: number
 }
 
-export interface ApiSimulationInput {
-  target_datetime: string
-  action_type: 'reposition' | 'expansion' | 'none'
-  constraints: {
-    max_vehicles: number
-    budget_limit: number
-    service_level: number
-  }
-}
 
-export interface ApiSimulationResult {
-  baseline: {
-    profit: number
-    demand_met: number
-    fleet_utilization: number
-    revenue: number
-    cost: number
-  }
-  action: {
-    profit: number
-    demand_met: number
-    fleet_utilization: number
-    revenue: number
-    cost: number
-  }
-  p50_impact: number
-  p90_impact: number
-  recommendation: string
-  flowArcs: Array<{
-    from: [number, number]
-    to: [number, number]
-    type: 'baseline' | 'action'
-    volume: number
-  }>
-}
 
 export interface ApiPrediction {
   time: string
@@ -465,8 +509,10 @@ export const fleetApi = {
   // ── Zones ──────────────────────────────────────────────────────────────────
   zones: {
     /** GET /api/v1/zones */
-    getAll: (): Promise<ApiZone[]> =>
-      apiFetch<ApiZone[]>('/api/v1/zones'),
+    getAll: async (): Promise<ApiZone[]> => {
+      const res = await apiFetch<ApiZone[]>('/api/v1/zones')
+      return (res || []).map(mapApiZone)
+    },
 
     /** GET /api/v1/zones/metadata */
     getMetadata: (): Promise<unknown> =>
@@ -477,8 +523,10 @@ export const fleetApi = {
       apiFetch('/api/v1/zones/statistics'),
 
     /** GET /api/v1/zones/:id */
-    getById: (id: number | string): Promise<ApiZone> =>
-      apiFetch<ApiZone>(`/api/v1/zones/${id}`),
+    getById: async (id: number | string): Promise<ApiZone> => {
+      const res = await apiFetch<ApiZone>(`/api/v1/zones/${id}`)
+      return mapApiZone(res)
+    },
 
     /** GET /api/v1/zones/:id/statistics */
     getZoneStatistics: (id: number | string): Promise<unknown> =>
@@ -489,16 +537,20 @@ export const fleetApi = {
       apiFetch(`/api/v1/zones/${id}/insights`),
 
     /** GET /api/v1/zones/heatmap */
-    getHeatmap: (): Promise<ApiHeatmapPoint[]> =>
-      apiFetch<ApiHeatmapPoint[]>('/api/v1/zones/heatmap'),
+    getHeatmap: async (): Promise<ApiHeatmapPoint[]> => {
+      const res = await apiFetch<ApiHeatmapPoint[]>('/api/v1/zones/heatmap')
+      return (res || []).map(mapApiHeatmapPoint)
+    },
 
     /** GET /api/v1/zones/compare?zoneIds=1&zoneIds=2 */
     compareMultiple: (zoneIds: number[]): Promise<unknown> =>
       apiFetch(`/api/v1/zones/compare?${zoneIds.map((id) => `zoneIds=${id}`).join('&')}`),
 
     /** GET /api/v1/zones/recommended?limit=10 */
-    getRecommended: (limit = 10): Promise<ApiRecommendedZone[]> =>
-      apiFetch<ApiRecommendedZone[]>(`/api/v1/zones/recommended?limit=${limit}`),
+    getRecommended: async (limit = 10): Promise<ApiRecommendedZone[]> => {
+      const res = await apiFetch<ApiRecommendedZone[]>(`/api/v1/zones/recommended?limit=${limit}`)
+      return (res || []).map(mapApiRecommendedZone)
+    },
 
     /** GET /api/v1/zones/top-demand?limit=10 */
     getTopDemand: (limit = 10): Promise<unknown[]> =>
@@ -539,20 +591,23 @@ export const fleetApi = {
   vehicles: {
     /** GET /api/v1/drivers/active?pageNumber=1&pageSize=200 */
     getAll: async (pageSize = 200): Promise<ApiVehicle[]> => {
-      const res = await apiFetch<ApiVehicle[]>(`/api/v1/drivers/active?pageNumber=1&pageSize=${pageSize}`)
-      return (res || []).map(mapVehicle)
+      const res = await apiFetch<any>(`/api/v1/drivers/active?pageNumber=1&pageSize=${pageSize}`)
+      const items = (res && Array.isArray(res) ? res : res?.items) || []
+      return items.map(mapVehicle)
     },
 
     /** GET /api/v1/drivers?status=Available&pageNumber=1&pageSize=50 */
-    getFiltered: (
+    getFiltered: async (
       status = 'Available',
       zoneId?: number,
       pageNumber = 1,
       pageSize = 50
-    ): Promise<unknown> =>
-      apiFetch(
+    ): Promise<unknown> => {
+      const res = await apiFetch<any>(
         `/api/v1/drivers?status=${status}${zoneId ? `&zoneId=${zoneId}` : ''}&pageNumber=${pageNumber}&pageSize=${pageSize}`
-      ),
+      )
+      return (res && Array.isArray(res) ? res : res?.items) || []
+    },
 
     /** GET /api/v1/drivers/:driverId */
     getById: async (driverId: string): Promise<ApiVehicle> => {
@@ -673,8 +728,10 @@ export const fleetApi = {
       ),
 
     /** GET /api/v1/trips/online?page=1&limit=100 */
-    getOnlineDrivers: (page = 1, limit = 100): Promise<unknown[]> =>
-      apiFetch<unknown[]>(`/api/v1/trips/online?page=${page}&limit=${limit}`),
+    getOnlineDrivers: async (page = 1, limit = 100): Promise<unknown[]> => {
+      const res = await apiFetch<any>(`/api/v1/trips/online?page=${page}&limit=${limit}`)
+      return (res && Array.isArray(res) ? res : res?.items) || []
+    },
   },
 
   // ── Reports (used by app/reports/page.tsx) ─────────────────────────────────
@@ -870,136 +927,7 @@ export const fleetApi = {
 
     /** GET /api/v1/simulation/playback?startHour=0&endHour=23 */
     getPlayback: (startHour = 0, endHour = 23): Promise<unknown> =>
-      apiFetch(`/api/v1/simulation/playback?startHour=${startHour}&endHour=${endHour}`),
-
-    /** POST/simulate run scenario comparison */
-    run: async (input: ApiSimulationInput): Promise<ApiSimulationResult> => {
-      try {
-        const zones = await fleetApi.zones.getAll()
-        const topZones = zones.slice(0, 15)
-
-        const zoneStates = topZones.map((z) => ({
-          zoneId: z.zoneId,
-          currentDrivers: z.current_drivers ?? 8,
-          predictedDemand: z.predicted_demand ?? 10,
-          currentDemand: z.current_demand ?? 6,
-        }))
-
-        const optimizationResult: any = await fleetApi.ai.optimizeRepositioning({
-          timeWindow: input.target_datetime,
-          zoneStates,
-          constraints: {
-            maxMovesPerVehicle: 1,
-            maxRelocationDistanceKm: 8.0,
-          },
-        }).catch(() => null)
-
-        const baseTrips = zones.reduce((sum, z) => sum + (z.current_demand ?? 0), 0)
-        const baseDrivers = zones.reduce((sum, z) => sum + (z.current_drivers ?? 0), 0)
-        const baseRevenue = zones.reduce((sum, z) => sum + ((z.current_demand ?? 0) * (z.avg_fare ?? 15)), 0)
-        const baseCost = baseDrivers * 12
-
-        const baseline = {
-          profit: Math.round((baseRevenue - baseCost) / 100) / 10,
-          demand_met: Math.round((baseDrivers / Math.max(1, baseTrips)) * 100),
-          fleet_utilization: 75,
-          revenue: Math.round(baseRevenue / 100) / 10,
-          cost: Math.round(baseCost / 100) / 10,
-        }
-
-        baseline.demand_met = Math.min(95, Math.max(65, baseline.demand_met))
-
-        const improvementFactor = input.action_type === 'none' ? 1.0 : input.action_type === 'reposition' ? 1.15 : 1.25
-        const actionRevenue = baseRevenue * improvementFactor
-        const actionCost = baseCost * (input.action_type === 'expansion' ? 1.15 : 1.02)
-        const action = {
-          profit: Math.round((actionRevenue - actionCost) / 100) / 10,
-          demand_met: Math.min(99, Math.round(baseline.demand_met * improvementFactor)),
-          fleet_utilization: Math.min(98, Math.round(baseline.fleet_utilization * (improvementFactor - 0.05))),
-          revenue: Math.round(actionRevenue / 100) / 10,
-          cost: Math.round(actionCost / 100) / 10,
-        }
-
-        const flowArcs: Array<{ from: [number, number]; to: [number, number]; type: 'baseline' | 'action'; volume: number }> = []
-        
-        if (input.action_type !== 'none') {
-          if (optimizationResult && Array.isArray(optimizationResult)) {
-            const sources = zones.filter(z => (z.current_drivers ?? 0) > (z.current_demand ?? 0)).slice(0, 3)
-            const targets = zones.filter(z => (z.current_drivers ?? 0) < (z.current_demand ?? 0)).slice(0, 3)
-            
-            sources.forEach((src, idx) => {
-              const dest = targets[idx] || targets[0]
-              if (dest && src.zoneId !== dest.zoneId) {
-                flowArcs.push({
-                  from: [src.longitude, src.latitude],
-                  to: [dest.longitude, dest.latitude],
-                  type: 'action',
-                  volume: Math.min(input.constraints.max_vehicles, 5 + idx * 3)
-                })
-              }
-            })
-          } else {
-            const midtown = zones.find(z => z.zoneName.toLowerCase().includes('midtown')) || zones[0]
-            const jfk = zones.find(z => z.zoneName.toLowerCase().includes('jfk')) || zones[1]
-            const lga = zones.find(z => z.zoneName.toLowerCase().includes('laguardia')) || zones[2]
-            
-            if (midtown && jfk) {
-              flowArcs.push({
-                from: [jfk.longitude, jfk.latitude],
-                to: [midtown.longitude, midtown.latitude],
-                type: 'action',
-                volume: 12
-              })
-            }
-            if (midtown && lga) {
-              flowArcs.push({
-                from: [lga.longitude, lga.latitude],
-                to: [midtown.longitude, midtown.latitude],
-                type: 'action',
-                volume: 8
-              })
-            }
-          }
-        }
-
-        const dtown = zones.find(z => z.zoneName.toLowerCase().includes('downtown')) || zones[3]
-        const brooklyn = zones.find(z => z.zoneName.toLowerCase().includes('brooklyn')) || zones[4]
-        if (dtown && brooklyn) {
-          flowArcs.push({
-            from: [brooklyn.longitude, brooklyn.latitude],
-            to: [dtown.longitude, dtown.latitude],
-            type: 'baseline',
-            volume: 5
-          })
-        }
-
-        const p50_impact = Math.round((action.profit - baseline.profit) * 10) / 10
-        const p90_impact = Math.round(p50_impact * 1.35 * 10) / 10
-
-        return {
-          baseline,
-          action,
-          p50_impact,
-          p90_impact,
-          recommendation: input.action_type === 'none' 
-            ? "Maintain current configuration. Baseline performance is operating within normal parameters."
-            : `Optimize fleet distribution: Reposition vehicles to high-surge zones. Recommended: Move ${flowArcs.filter(a => a.type === 'action').reduce((s, a) => s + a.volume, 0)} vehicles. Expected profit impact +$${p50_impact}K (P50).`,
-          flowArcs
-        }
-      } catch (err) {
-        return {
-          baseline: { profit: 125, demand_met: 78, fleet_utilization: 70, revenue: 250, cost: 125 },
-          action: { profit: 162, demand_met: 92, fleet_utilization: 84, revenue: 285, cost: 123 },
-          p50_impact: 37,
-          p90_impact: 52,
-          recommendation: "Simulation fallback mode. Reposition 12 vehicles to Midtown Manhattan and Downtown. Expected profit improvement: $37K (P50)",
-          flowArcs: [
-            { from: [-73.95, 40.76], to: [-73.98, 40.78], type: 'action', volume: 12 },
-            { from: [-74.0, 40.75], to: [-73.97, 40.77], type: 'action', volume: 8 }
-          ]
-        }
-      }
-    }
+      apiFetch(`/api/v1/simulation/playback?startHour=${startHour}&endHour=${endHour}`)
   },
 
   // ── AI ─────────────────────────────────────────────────────────────────────

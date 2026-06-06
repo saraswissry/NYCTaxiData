@@ -9,7 +9,7 @@ import { createVehicleScenegraphLayer } from '@/components/vehicle-scenegraph-la
 import {
   FleetVehicleData,
 } from '@/lib/fleet-vehicle'
-import Map from 'react-map-gl/maplibre'
+import MapGL from 'react-map-gl/maplibre'
 import { cn } from '@/lib/utils'
 import * as h3 from 'h3-js'
 import { useTheme } from 'next-themes'
@@ -116,6 +116,8 @@ export interface CommandMapProps {
   /** Fired on hex click with cursor position (for context menu). */
   onZoneMapClick?: (event: ZoneMapClickEvent) => void
   onSelectZone?: (zone: MapZoneSelection) => void
+  simulationData?: any[]
+  cachedZones?: ApiZone[]
 }
 
 export function CommandMap({ 
@@ -130,6 +132,8 @@ export function CommandMap({
   data: fleetData,
   onZoneMapClick,
   onSelectZone,
+  simulationData,
+  cachedZones,
 }: CommandMapProps) {
   const isFocusMode = Boolean(highlightedZoneId && focusZoneOnSelect)
 
@@ -298,7 +302,28 @@ export function CommandMap({
   }, [])
 
   const isPredictive = viewMode === 'predictive'
-  const activeHexData = isPredictive ? predictiveData : data
+  const isSimulation = viewMode === 'simulation'
+
+  const simulationHexData = React.useMemo(() => {
+    if (!simulationData || !cachedZones || cachedZones.length === 0) return []
+    const zoneMap = new Map(cachedZones.map(z => [z.zoneId, z]))
+    return simulationData.map((s) => {
+      const zone = zoneMap.get(Number(s.zoneId))
+      if (!zone) return null
+      const hex = h3.latLngToCell(zone.latitude, zone.longitude, 8)
+      const value = s.demand ?? 0
+      const supply = s.driverCount ?? 0
+      return {
+        hex,
+        value,
+        supply,
+        gap: value - supply,
+        avgFare: s.revenue / Math.max(1, s.activeTrips),
+      }
+    }).filter(Boolean) as HexDataType[]
+  }, [simulationData, cachedZones])
+
+  const activeHexData = isSimulation ? simulationHexData : (isPredictive ? predictiveData : data)
 
   // DeckGL H3 layer configurations with dynamic live states
   const layers = [
@@ -353,11 +378,11 @@ export function CommandMap({
       getLineWidth: (d: HexDataType) => (d.hex === highlightedZoneId ? 3 : 1),
       lineWidthMinPixels: 1,
       updateTriggers: {
-        getFillColor: [isPredictive, opacity, showGap, highlightedZoneId, isFocusMode],
-        getElevation: [isPredictive, showGap, isFocusMode, highlightedZoneId],
+        getFillColor: [isPredictive, isSimulation, opacity, showGap, highlightedZoneId, isFocusMode],
+        getElevation: [isPredictive, isSimulation, showGap, isFocusMode, highlightedZoneId],
         getLineColor: [highlightedZoneId, resolvedTheme, isFocusMode],
         getLineWidth: [highlightedZoneId, isFocusMode],
-        data: [isPredictive],
+        data: [isPredictive, isSimulation, activeHexData],
       },
       transitions: {
         getElevation: FOCUS_TRANSITION_MS,
@@ -465,7 +490,7 @@ export function CommandMap({
           } : null
         }
       >
-        <Map
+        <MapGL
           mapStyle={mapStyle}
           reuseMaps
         />
@@ -536,56 +561,6 @@ export function CommandMap({
         )}
       </div>
 
-      {/* Floating Card C: LAYER CONFIGURATION */}
-      <div className="absolute top-6 right-6 z-20 p-4 glass rounded-xl pointer-events-auto w-72 text-foreground transition-all flex flex-col gap-4 select-none shadow-lg theme-transition">
-        <div>
-          <div className="text-[10px] font-mono font-bold uppercase tracking-widest mb-2.5 text-primary">LAYER CONTROLS</div>
-          <div className="text-[10px] text-muted-foreground leading-normal mb-2">
-            Overlay passenger density grids and real-time vehicle dispatch patterns. Toggle options in the top bar to combine view states.
-          </div>
-        </div>
-
-        <div>
-          <div className="flex items-center justify-between mb-1.5">
-            <span className="text-[10px] text-muted-foreground uppercase font-bold tracking-wider">Hex Grid Opacity</span>
-            <span className="text-xs text-accent font-mono font-bold">{opacity}%</span>
-          </div>
-          
-          <div className="relative pt-1 flex items-center">
-            <input 
-              type="range" 
-              min="10" 
-              max="100" 
-              value={opacity} 
-              onChange={(e) => setOpacity(parseInt(e.target.value))} 
-              className="w-full h-1 bg-muted rounded-lg appearance-none cursor-pointer accent-primary border border-border"
-              style={{
-                background: `linear-gradient(to right, var(--primary) 0%, var(--primary) ${opacity}%, var(--muted) ${opacity}%, var(--muted) 100%)`
-              }}
-            />
-          </div>
-        </div>
-
-        <div className="border-t border-border pt-3">
-          <div className="text-[10px] font-mono font-bold uppercase tracking-widest mb-2 text-primary">CURRENT TELEMETRY</div>
-          <div className="grid grid-cols-2 gap-3.5">
-            <div>
-              <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider">Hotspots</div>
-              <div className="text-base font-black text-foreground font-mono mt-0.5">847 Areas</div>
-            </div>
-            <div>
-              <div className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider">Avg Surge</div>
-              <div className="text-base font-black text-success font-mono mt-0.5">$32.50</div>
-            </div>
-            <div className="col-span-2">
-              <div className="flex justify-between items-center bg-secondary border border-border px-2 py-1.5 rounded-lg mt-0.5 text-foreground">
-                <span className="text-[9px] text-muted-foreground uppercase font-bold tracking-wider">Avg Wait Time</span>
-                <span className="text-xs font-black text-accent font-mono">4.2 MIN</span>
-              </div>
-            </div>
-          </div>
-        </div>
-      </div>
       </>
       )}
     </div>

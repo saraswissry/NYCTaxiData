@@ -30,6 +30,7 @@ import {
 interface DispatchQueueProps {
   requests: DispatchRequest[]
   className?: string
+  error?: string | null
 }
 
 function getPriorityStyles(priority: DispatchRequest['priority']) {
@@ -56,7 +57,7 @@ function getStatusIcon(status: DispatchRequest['status']) {
   }
 }
 
-export function DispatchQueue({ requests, className }: DispatchQueueProps) {
+export function DispatchQueue({ requests, error, className }: DispatchQueueProps) {
   const selectedZoneId = useDispatchStore((s) => s.selectedZoneId)
   const selectedZoneLabel = useDispatchStore((s) => s.selectedZoneLabel)
   const clearSelectedZone = useDispatchStore((s) => s.clearSelectedZone)
@@ -100,7 +101,24 @@ export function DispatchQueue({ requests, className }: DispatchQueueProps) {
       </div>
 
       <ScrollArea className="flex-1 min-h-0">
-        {filteredRequests.length === 0 ? (
+        {error ? (
+          <div className="flex flex-col items-center justify-center py-16 px-6 text-center h-full">
+            <AlertCircle className="size-8 text-destructive mb-3 animate-pulse" />
+            <p className="text-sm font-semibold text-foreground">Database Stream Offline</p>
+            <p className="text-[11px] text-muted-foreground mt-2 max-w-[240px] leading-relaxed">
+              {error}
+            </p>
+            <Button
+              type="button"
+              variant="outline"
+              size="sm"
+              className="mt-5 border-destructive/20 text-destructive/80 hover:bg-destructive/10 hover:text-destructive text-[11px]"
+              onClick={() => window.location.reload()}
+            >
+              Retry Connection
+            </Button>
+          </div>
+        ) : filteredRequests.length === 0 ? (
           <div className="flex flex-col items-center justify-center py-16 px-6 text-center">
             <MapPin className="size-8 text-muted-foreground/40 mb-3" />
             <p className="text-sm font-medium text-foreground">No dispatches in this zone</p>
